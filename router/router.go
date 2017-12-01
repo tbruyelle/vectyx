@@ -16,6 +16,14 @@ import (
 	"github.com/gopherjs/vecty"
 )
 
+var supportsPushState bool
+
+func init() {
+	supportsPushState = (js.Global.Get(`onpopstate`) != js.Undefined) &&
+		(js.Global.Get(`history`) != js.Undefined) &&
+		(js.Global.Get(`history`).Get(`pushState`) != js.Undefined)
+}
+
 // DefaultConfig for convenience.
 var DefaultConfig = &Config{}
 
@@ -185,15 +193,22 @@ func (r *Router) update() vecty.ComponentOrHTML {
 // start initializes the router, ensures we have a hash component and attaches
 // the event listener to trigger updates on hash change
 func (r *Router) start() vecty.ComponentOrHTML {
-	// Redirect to hash route if missing
-	if hash() == `` {
-		Go(`/`)
+	if supportsPushState {
+		js.Global.Set(`onpopstate`, r.update)
+	} else {
+		// Redirect to hash route if missing
+		if hash() == `` {
+			Go(`/`)
+		}
+		js.Global.Call(`addEventListener`, `hashchange`, r.update, true)
 	}
-	js.Global.Call(`addEventListener`, `hashchange`, r.update, true)
 	return r.update()
 }
 
 func currentPathWithParams() string {
+	if supportsPushState {
+		return js.Global.Get(`location`).Get(`href`).String()
+	}
 	return strings.SplitN(hash(), `#`, 2)[1]
 }
 
@@ -219,7 +234,13 @@ func GoWithParams(path string, params url.Values) {
 		panic(err)
 	}
 	u.RawQuery = params.Encode()
-	js.Global.Get(`location`).Set(`hash`, u.RequestURI())
+	if supportsPushState {
+		js.Global.Get(`history`).Call(`pushState`, nil, ``, u.RequestURI())
+		// Need to emit manually the `popstate` event, because it's not trigeered on `pushState`
+		js.Global.Call(`dispatchEvent`, js.Global.Get(`Event`).New(`popstate`))
+	} else {
+		js.Global.Get(`location`).Set(`hash`, u.RequestURI())
+	}
 }
 
 // New instantiates a new router.  If the config argument is nil, DefaultConfig
